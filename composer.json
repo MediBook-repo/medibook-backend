@@ -1,0 +1,15 @@
+{
+    "name": "asus/medibook-backend",
+    "autoload": {
+        "psr-4": {
+            "MedibookBackend\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Wilson Gonzales",
+            "email": "wdotgonzales@gmail.com"
+        }
+    ],
+    "require": {}
+}
