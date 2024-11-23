@@ -4,11 +4,11 @@
 require_once __DIR__ . '/../vendor/autoload.php';
 
 use MedibookBackend\Database;
-use MedibookBackend\UserLogin;
 use MedibookBackend\RefreshToken;
 
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+
 
 try {
     if ($_SERVER['REQUEST_METHOD'] != 'POST') {
@@ -26,7 +26,7 @@ try {
     $postData = file_get_contents('php://input');
     $postData = json_decode($postData, true);
 
-    if (!isset($postData['email']) || !isset($postData['password'])) {
+    if (!isset($postData['refresh_token'])) {
         http_response_code(400);
         echo json_encode([
             'message' => 'Missing required key or value.'
@@ -34,26 +34,27 @@ try {
         exit;
     }
 
-    $userLogin = new UserLogin($connection, $postData['email'], $postData['password']);
+    $refresh_token = new RefreshToken($connection, 0, $postData['refresh_token'], 0);
 
-    if (!$userLogin->checkIfEmailMatchesToAnAccount()) {
-        http_response_code(409);
-        echo json_encode(['message' => 'Email does not exist']);
+    if ($refresh_token->checkIfRefreshTokenIsExpired()) {
+        http_response_code(401);  // Unauthorized
+        echo json_encode([
+            'error' => 'Refresh Token has expired. Please login again.',
+        ]);
         exit;
     }
 
-    if (!$userLogin->checkIfPasswordMatches()) {
-        http_response_code(409);
-        echo json_encode(['message' => 'Password does not match.']);
-        exit;
-    }
-
-    $user_id = $userLogin->getUserInformation()['id'];
-    $role = $userLogin->getUserInformation()['role'];
+    $refresh_token->deleteOldRefreshToken();
 
     $secretKey = 'WEEZUS GONZALES 123';
+    $decoded = JWT::decode($postData['refresh_token'], new Key($secretKey, 'HS256'));
 
-    $payload_access_token = [
+    $decodedArray = (array) $decoded;
+    $user_id = $decodedArray['user_id'];
+    $role = $decodedArray['role'];
+    $expiration_at = $decodedArray['exp'];
+
+    $new_payload_access_token = [
         'iss' => 'medibook', // Issuer
         'aud' => 'medibook-users', // Audience
         'iat' => time(), // Issued at
@@ -62,7 +63,7 @@ try {
         'role' => $role
     ];
 
-    $payload_refresh_token = [
+    $new_payload_refresh_token = [
         'iss' => 'medibook', // Issuer
         'aud' => 'medibook-users', // Audience
         'iat' => time(), // Issued at
@@ -71,20 +72,15 @@ try {
         'role' => $role
     ];
 
-    $refresh_token_user_id = $payload_refresh_token['user_id'];
-    $refresh_token_exp = $payload_refresh_token['exp'];
+    $new_access_token = JWT::encode($new_payload_access_token, $secretKey, 'HS256');
+    $new_refresh_token = JWT::encode($new_payload_refresh_token, $secretKey, 'HS256');
 
-    $access_token = JWT::encode($payload_access_token, $secretKey, 'HS256');
-    $refresh_token = JWT::encode($payload_refresh_token, $secretKey, alg: 'HS256');
-
-    $refreshTokenClass = new RefreshToken($connection, $refresh_token_user_id, $refresh_token, $refresh_token_exp);
-    $refreshTokenClass->createNewRefreshToken();
-
-    http_response_code(200);
+    $new_refresh_token_class = new RefreshToken($connection, $user_id, $new_refresh_token,  $expiration_at);
+    $new_refresh_token_class->createNewRefreshToken();
 
     echo json_encode([
-        'access_token' => $access_token,
-        'refresh_token' => $refresh_token
+        'access_token' => $new_access_token,
+        'refresh_token' => $new_refresh_token
     ]);
 } catch (PDOException $e) {
     echo "Connection failed: " . $e->getMessage();
